@@ -13,6 +13,7 @@
 
 package org.openx.data.jsonserde;
 
+import java.nio.charset.CharacterCodingException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -32,7 +33,6 @@ import org.apache.hadoop.io.Writable;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.hive.serde2.SerDeStats;
 import org.apache.hadoop.hive.serde2.objectinspector.ListObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.MapObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector.Category;
@@ -47,6 +47,7 @@ import org.apache.hadoop.hive.serde2.objectinspector.primitive.ShortObjectInspec
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.StringObjectInspector;
 import org.apache.hadoop.hive.serde2.typeinfo.StructTypeInfo;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.BytesWritable;
 import org.openx.data.jsonserde.json.JSONArray;
 import org.openx.data.jsonserde.json.JSONException;
 import org.openx.data.jsonserde.json.JSONObject;
@@ -68,10 +69,6 @@ public class JsonSerDe implements SerDe {
     StructTypeInfo rowTypeInfo;
     StructObjectInspector rowObjectInspector;
     boolean[] columnSortOrderIsDesc;
-    private SerDeStats stats;
-    private boolean lastOperationSerialize;
-    long deserializedDataSize;
-    long serializedDataSize;
     // if set, will ignore malformed JSON in deserialization
     boolean ignoreMalformedJson = false;
     public static final String PROP_IGNORE_MALFORMED_JSON = "ignore.malformed.json";
@@ -111,8 +108,6 @@ public class JsonSerDe implements SerDe {
         }
         assert (columnNames.size() == columnTypes.size());
 
-	stats = new SerDeStats();
-	
         // Create row related objects
         rowTypeInfo = (StructTypeInfo) TypeInfoFactory
                 .getStructTypeInfo(columnNames, columnTypes);
@@ -149,8 +144,17 @@ public class JsonSerDe implements SerDe {
      */
     @Override
     public Object deserialize(Writable w) throws SerDeException {
-        Text rowText = (Text) w;
-        deserializedDataSize = rowText.getBytes().length;
+        Text rowText;
+        if (w instanceof BytesWritable) {
+          BytesWritable b = (BytesWritable) w;
+          try {
+            rowText = new Text(Text.decode(b.getBytes(),0,b.getLength()));
+          } catch (CharacterCodingException e) {
+            throw new SerDeException(e);
+          }
+        } else {
+          rowText = (Text) w;
+        }
 	
         // Try parsing row into JSON object
         JSONObject jObj = null;
@@ -225,7 +229,6 @@ public class JsonSerDe implements SerDe {
         
         Text t = new Text(serializer.toString());
         
-	serializedDataSize = t.getBytes().length;
         return t;
     }
 
@@ -402,17 +405,6 @@ public class JsonSerDe implements SerDe {
             throw new SerDeException(msg);
         }
     }
-
-    @Override
-    public SerDeStats getSerDeStats() {
-	if(lastOperationSerialize) {
-            stats.setRawDataSize(serializedDataSize);
-        } else {
-            stats.setRawDataSize(deserializedDataSize);
-        }
-        return stats;
-    }
-
    
     public static final String PFX = "mapping.";
     /**
